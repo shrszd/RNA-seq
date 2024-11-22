@@ -14,9 +14,10 @@ editor_options:
 # Input the metadata file as CSV
 
 ```{r }
-meta.tab <-  read.csv("~/rna_seq/celiac/celiac_meta.csv", row.names = 1)
+meta.tab <-  read.csv("meta_data.csv", row.names = 1)
 meta.tab
 
+# Sort the metadata
 sorted_meta.tab <- meta.tab[order(meta.tab$stimulant, decreasing = FALSE, na.last = FALSE), ]
 #sorted_mata.tab <- mata.tab
 sorted_meta.tab
@@ -53,7 +54,7 @@ write.csv(annot.tab, "annot_tab.csv")
 Load table of counts (expression abundances for all experimental samples):
 
 ```{r }
-exp.levels <- read.csv("~/rna_seq/celiac/celiac_cout.csv", row.names = 1)
+exp.levels <- read.csv("count_data.csv", row.names = 1)
 
 # Checking the data:  
 exp.levels
