@@ -1,0 +1,127 @@
+---
+title: "Step 1: Selecion of the data from the datasets"
+Subtitle: "Data cleaning"
+author: "Sazzad Shahrear"
+date: "`r Sys.Date()`"
+output: 
+  html_document: 
+    toc: yes
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+# Input the metadata file as CSV
+
+```{r }
+meta.tab <-  read.csv("~/rna_seq/celiac/celiac_meta.csv", row.names = 1)
+meta.tab
+
+sorted_meta.tab <- meta.tab[order(meta.tab$stimulant, decreasing = FALSE, na.last = FALSE), ]
+#sorted_mata.tab <- mata.tab
+sorted_meta.tab
+```
+
+
+# Selecting the dataset
+
+```{r }
+# Select rows
+# Input meta.ta$column_name == "desired_value"
+meta.data <- sorted_meta.tab[(sorted_meta.tab$selection == "test_glia") | (sorted_meta.tab$selection == "test_immu"), ]
+#meta.data <- sorted_meta.tab[(sorted_meta.tab$stimulant == "gliadin stimulated"),]
+#meta.data <- sorted_meta.tab[(sorted_meta.tab$stimulant == "HA") & (sorted_meta.tab$group == "test"), ]
+#meta.data <- sorted_meta.tab
+meta.data 
+
+# Remove rows with all NAs (including newly created ones)
+annot.tab <- na.omit(meta.data)
+#annot.tab <- meta.data
+
+# Print the cleaned data (optional)
+annot.tab
+
+# Save csv
+write.csv(annot.tab, "annot_tab.csv")
+
+```
+
+
+
+##### Read data
+
+Load table of counts (expression abundances for all experimental samples):
+
+```{r }
+exp.levels <- read.csv("~/rna_seq/celiac/celiac_cout.csv", row.names = 1)
+
+# Checking the data:  
+exp.levels
+```
+
+
+### In order to run differential expression analysis, all columns with metadata should be remove e.g., columns with information about gene position.
+# Be careful which code you are using
+
+```{r }
+#count.tab <-  exp.levels[,-c(1:x)]
+# From exp.levels data frame, keep all the rows but remove columns 1 to x.
+#x is the number of the last column that needs to be removed.
+
+count_total <-  exp.levels[]
+count_total
+```
+
+
+
+### Selecting data
+
+```{r }
+# Annotation file input as csv
+meta_sample <- read.csv("annot_tab.csv")[, 1]
+meta_sample
+
+# Get column names
+all_sample <- names(count_total)
+all_sample
+
+# Find matching columns
+matching_sample <- all_sample %in% meta_sample
+matching_sample
+
+# Filter count table
+count.sort <- total.count[, matching_sample]
+count.sort
+
+```
+
+```{r }
+annot.data <- read.csv("annot_tab.csv", header = TRUE)  # Assuming no header row
+annot.data
+
+sample_names <- as.character(annot.data[, 1])  # Assuming sample names are in the first column
+sample_names
+
+#data_row_names <- sample_names
+data_row_names <- colnames(count.sort)
+data_row_names
+
+
+sorting_order <- match(sample_names, data_row_names)
+sorting_order
+
+count.tab <- count.sort[, sorting_order]
+count.tab
+
+
+# Save csv
+write.csv(count.tab, "count_tab.csv")
+```
+
+```{r }
+# Check if the annotation and count tables are consistent:
+all(row.names(annot.tab) == colnames(count.tab))
+# If you get TRUE, they are in the same order, otherwise you need to reorder the tables to match each other. 
+```
+
+
