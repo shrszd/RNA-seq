@@ -1,0 +1,250 @@
+---
+title: "meta_analysis"
+author: "shrszd"
+date: "2024-11-13"
+output: html_document
+---
+
+```{r }
+install.packages(c("metafor", "metaRNASeq"))
+
+```
+
+library(DESeq2)
+# meta_data
+meta1 <-  read.csv("~/rna_seq/meta_celiac.csv", row.names = 1)
+meta2 <-  read.csv("~/rna_seq/meta_narco.csv", row.names = 1)
+
+# Load individual studies' data
+dds1 <- DESeqDataSetFromMatrix(countData = data1, colData = meta1, design = ~ batch+group)
+dds2 <- DESeqDataSetFromMatrix(countData = data2, colData = meta2, design = ~ batch+group)
+# Repeat for other datasets
+
+# Filter low-count genes (recommended threshold depends on the dataset)
+dds1 <- dds1[rowSums(counts(dds1) >= 5) >= 1,]
+dds2 <- dds2[rowSums(counts(dds2) >= 5) >= 1,]
+
+# Normalize data
+dds1 <- estimateSizeFactors(dds1)
+dds2 <- estimateSizeFactors(dds2)
+
+# Differential expression with DESeq2
+dds1 <- DESeq(dds1)
+res1 <- results(dds1)
+dds2 <- DESeq(dds2)
+res2 <- results(dds2)
+
+# Keep only results with adjusted p-values < 0.05
+res3 <- res1[which(res1$padj < 0.05),]
+res4 <- res2[which(res2$padj < 0.05),]
+
+dim(res1)
+dim(res2)
+dim(res3)
+dim(res4)
+
+```{r }
+# Assuming res1 and res2 are DESeq2 results with p-values for each gene
+# Find common genes across both studies
+common_genes <- intersect(rownames(res1), rownames(res2))
+
+# Filter and reorder results for each study to include only common genes
+res1_common <- res1[common_genes, ]
+res2_common <- res2[common_genes, ]
+
+# Extract p-values, handling the fact that some studies may lack significant genes
+pvalues <- list(
+  res1_common$pvalue,
+  res2_common$pvalue
+)
+
+```
+
+
+```{r }
+# Ensure metap package is loaded for meta-analysis
+library(metap)
+
+# Meta-analyze p-values, handling NA and missing values gracefully
+combined_pvalues <- sapply(1:length(pvalues[[1]]), function(i) {
+  gene_pvalues <- sapply(pvalues, `[`, i)
+  
+  # Handle NA values
+  if (all(is.na(gene_pvalues))) {
+    return(NA)  # Skip if all values are NA
+  } else {
+    valid_pvalues <- gene_pvalues[!is.na(gene_pvalues)]
+    if (length(valid_pvalues) > 1) {
+      return(sumlog(valid_pvalues)$p)  # Combine p-values if two or more are present
+    } else {
+      return(NA)  # Return NA if only one valid p-value
+    }
+  }
+})
+
+# Check the combined p-values
+head(combined_pvalues)
+
+```
+
+```{r }
+# Adjust combined p-values using the Benjamini-Hochberg (FDR) method
+adjusted_pvalues <- p.adjust(combined_pvalues, method = "BH")
+# Add adjusted p-values to a data frame for easier interpretation
+results_df <- data.frame(
+  Gene = common_genes,
+  CombinedPValue = combined_pvalues,
+  AdjustedPValue = adjusted_pvalues
+)
+# View top results
+head(results_df[order(results_df$AdjustedPValue), ])
+
+# Filter for significant DEGs
+significant_genes <- results_df[results_df$AdjustedPValue < 0.05, ]
+# View significant genes
+head(significant_genes)
+dim(significant_genes)
+#View(significant_genes)
+
+# Extract logFC values from each study for the common genes
+# Assuming res1$logFC and res2$logFC hold log fold changes for each study
+logfc_values <- list(res1_common$log2FoldChange, res2_common$log2FoldChange)
+logfc_values
+# Calculate mean logFC across studies for each gene
+combined_logFC <- rowMeans(do.call(cbind, logfc_values), na.rm = TRUE)
+# Add to results data frame
+results_df$Log2FoldChange <- combined_logFC
+
+head(results_df)
+
+# Generate the volcano plot
+library(ggplot2)
+ggplot(results_df, aes(x = Log2FoldChange, y = -log10(AdjustedPValue))) +
+  geom_point(aes(color = AdjustedPValue < 0.05), alpha = 0.7) +
+  scale_color_manual(values = c("grey", "red")) +
+  labs(title = "Volcano Plot of DEGs",
+       x = "Log2 Fold Change",
+       y = "-log10 Adjusted P-value") +
+  theme_minimal() +
+  theme(legend.position = "top")
+```
+
+```{r }
+# Load meta package
+library(meta)
+
+# Assume logFC and SE are available for each study and gene
+# res1$logFC and res1$SE, res2$logFC and res2$SE
+combined_logFC <- sapply(1:length(common_genes), function(i) {
+  gene_logfc <- c(res1_common$log2FoldChange[i], res2_common$log2FoldChange[i])
+  gene_se <- c(res1_common$lfcSE[i], res2_common$lfcSE[i])
+  # Perform meta-analysis for this gene
+  meta_result <- metagen(gene_logfc, gene_se, studlab = c("Study1", "Study2"))
+  return(meta_result$TE.random)  # Random effects logFC
+})
+
+# Add to results data frame
+results_df$Log2FoldChange <- combined_logFC
+
+write.csv(results_df, "/home/shahsazz/rna_seq/results_df.csv", row.names = FALSE, na = "")
+
+# Volcano plot
+ggplot(results_df, aes(x = Log2FoldChange, y = -log10(AdjustedPValue))) +
+  geom_point(aes(color = AdjustedPValue < 0.05), alpha = 0.7, size = 2) +
+  scale_color_manual(values = c("gray", "red")) +    # Color for non-significant vs significant genes
+  theme_minimal() +
+  labs(
+    title = "Volcano Plot of Meta-analysis Results",
+    x = "Log2 Fold Change",
+    y = "-log10 Adjusted P-value"
+  ) +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "blue") +  # Significance threshold
+  geom_vline(xintercept = 0.5, linetype = "dashed", color = "blue") +               # No effect threshold
+  geom_vline(xintercept = -0.5, linetype = "dashed", color = "blue")
+```
+
+```{r }
+# Load necessary packages
+library(meta)
+library(ggplot2)
+
+# Assuming you have already computed the combined logFC and SE for each gene
+# res1$logFC and res2$logFC are log fold changes for each study
+# res1$SE and res2$SE are the standard errors for each study
+
+# Example combined results for a single gene:
+# Note: meta-analysis requires logFC and SE values for each gene across studies
+combined_results <- sapply(1:length(common_genes), function(i) {
+  gene_logfc <- c(res1_common$log2FoldChange[i], res2_common$log2FoldChange[i])
+  gene_se <- c(res1_common$lfcSE[i], res2_common$lfcSE[i])
+  
+  # Perform meta-analysis for this gene
+  meta_result <- metagen(gene_logfc, gene_se, studlab = c("Study1", "Study2"))
+  #meta_analysis <- rma(yi = gene_logfc, sei = gene_logfc, method = "REML")
+  return(meta_result)
+})
+
+View(combined_results)
+
+# Set default values (e.g., NA) for entries without TE.random
+combined_results <- lapply(combined_results, function(x) {
+  if (!("TE.random" %in% names(x))) {
+    return(list(TE.random = NA, lower = NA, upper = NA))
+  }
+  return(x)
+})
+
+
+# Create a data frame for the forest plot
+forest_df <- data.frame(
+  Gene = common_genes,
+  LogFC = sapply(combined_results, function(x) x$TE.random),  # Random-effects logFC
+  LowerCI = sapply(combined_results, function(x) x$lower),     # Lower CI of logFC
+  UpperCI = sapply(combined_results, function(x) x$upper)      # Upper CI of logFC
+)
+
+write.csv(forest_df, "/home/shahsazz/rna_seq/forest_df.csv", row.names = FALSE, na = "")
+
+# Plot forest plot using ggplot2
+ggplot(forest_df, aes(x = LogFC, y = Gene)) +
+  geom_point() +
+  geom_errorbarh(aes(xmin = LowerCI, xmax = UpperCI), height = 0.2) +
+  theme_minimal() +
+  labs(
+    x = "Log2 Fold Change (logFC)",
+    y = "Gene",
+    title = "Forest Plot of Combined Log2 Fold Change"
+  ) +
+  theme(axis.text.y = element_text(size = 6))
+```
+
+
+library(dplyr)  # Load dplyr for case_when function
+# Step 1: Add a new column for significance classification
+results_df <- results_df %>%
+  mutate(Significance = case_when(
+    AdjustedPValue < 0.05 & Log2FoldChange > 0.5 ~ "Upregulated",
+    AdjustedPValue < 0.05 & Log2FoldChange < -0.5 ~ "Downregulated",
+    TRUE ~ "Non-significant"
+  ))
+
+# Step 2: Use the new Significance column in the plot with labeled axes
+ggplot(results_df, aes(x = Log2FoldChange, y = -log10(AdjustedPValue))) +
+  geom_point(aes(color = Significance), alpha = 0.8, size = 1.5) +  # Smaller point size for a similar density
+  scale_color_manual(values = c("Upregulated" = "red", "Downregulated" = "blue", "Non-significant" = "gray")) +
+  theme_minimal() +
+  labs(
+    title = "Volcano Plot of Meta-analysis Results",
+    x = "Log2 Fold Change",
+    y = "-log10 Adjusted P-value"
+  ) +
+  scale_x_continuous(name = "Log2 Fold Change", limits = c(-2, 2)) +     # Set limits for x-axis if needed
+  scale_y_continuous(name = "-log10 Adjusted P-value") +                 # Customize y-axis label
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black") +  # Horizontal significance threshold
+  geom_vline(xintercept = 0.5, linetype = "dashed", color = "black") +           # Positive logFC threshold
+  geom_vline(xintercept = -0.5, linetype = "dashed", color = "black") +           # Negative logFC threshold
+  theme(
+    panel.border = element_rect(color = "black", fill = NA, size = 1)  # Black box around the plot
+  )
+  
+
